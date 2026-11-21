@@ -1,0 +1,128 @@
+
+name: CyberSecurity Threat Model Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Security verification mode"
+        required: true
+        type: choice
+        default: audit
+        options:
+          - audit
+          - enforce
+
+jobs:
+  threat-model-verification:
+    name: STRIDE Security Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify threat model file
+        run: |
+          echo "Checking threat model file..."
+
+          if [ ! -f threat-model.csv ]; then
+            echo "ERROR: Threat model file not found!"
+            exit 1
+          fi
+
+          echo "Threat model file found."
+
+      - name: Analyze STRIDE threats
+        env:
+          CHECK_MODE: ${{ github.event.inputs.mode || 'audit' }}
+        run: |
+          python3 - <<'PY'
+          import csv
+          import os
+          import sys
+          from collections import Counter
+
+          filename = "threat-model.csv"
+          mode = os.environ["CHECK_MODE"]
+
+          print("================================")
+          print("CYBERSECURITY THREAT VERIFICATION")
+          print("================================")
+
+          with open(filename, encoding="utf-8-sig", newline="") as f:
+              reader = csv.DictReader(f)
+
+              required = {
+                  "Id", "Title", "Category",
+                  "Priority", "State", "Interaction"
+              }
+
+              if not required.issubset(reader.fieldnames or []):
+                  print("ERROR: Invalid CSV structure!")
+                  sys.exit(1)
+
+              threats = list(reader)
+
+          if not threats:
+              print("ERROR: Threat model is empty!")
+              sys.exit(1)
+
+          categories = Counter()
+          priorities = Counter()
+          unresolved = []
+
+          resolved_states = {
+              "mitigated",
+              "resolved",
+              "closed",
+              "completed"
+          }
+
+          for threat in threats:
+              category = threat["Category"].strip()
+              priority = threat["Priority"].strip().lower()
+              state = threat["State"].strip().lower()
+
+              categories[category] += 1
+              priorities[priority] += 1
+
+              if priority in ("high", "critical"):
+                  if state not in resolved_states:
+                      unresolved.append(threat)
+
+          print(f"\nTotal threats: {len(threats)}")
+
+          print("\nSTRIDE categories:")
+          for category, count in sorted(categories.items()):
+              print(f"  {category}: {count}")
+
+          print("\nThreat priorities:")
+          for priority, count in sorted(priorities.items()):
+              print(f"  {priority}: {count}")
+
+          print(f"\nUnresolved HIGH/CRITICAL: {len(unresolved)}")
+
+          print("\nSecurity gate mode:", mode)
+
+          if mode == "enforce" and unresolved:
+              print("\nSECURITY GATE FAILED!")
+
+              for threat in unresolved:
+                  print(
+                      f"ID {threat['Id']}: "
+                      f"{threat['Title']}"
+                  )
+
+              sys.exit(1)
+
+          print("\nSECURITY CHECK PASSED!")
+          PY
+
+      - name: Verification completed
+        run: |
+          echo "Threat model verification finished."
